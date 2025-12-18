@@ -24,6 +24,7 @@ class Element:
         self.parent = None      # 父元素
         self.children = []      # 子元素列表
         self.depth = 0          # 元素深度
+        self.has_children = False  # 标记是否有子元素需要后续加载
         
         # 元素状态和属性
         self.is_enabled = None  # 是否可用
@@ -43,6 +44,7 @@ class Element:
         self.stability_suggestions = []  # 定位优化建议
         self.locator_strategy = None  # 推荐的定位策略
         self.locator_scores = {}  # 各定位方法的评分
+        self.locator_priority = []  # 定位方法优先级排序
     
     def __str__(self):
         """字符串表示"""

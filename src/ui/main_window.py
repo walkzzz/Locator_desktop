@@ -211,8 +211,51 @@ class MainWindow(QMainWindow):
         
         # 定位方式选择
         locate_method_group = QGroupBox("定位方式")
-        locate_method_layout = QHBoxLayout()
+        locate_method_layout = QVBoxLayout()
         
+        # 快捷按钮区域
+        quick_method_layout = QHBoxLayout()
+        
+        # 属性定位快捷按钮
+        self.attr_btn = QPushButton("属性定位")
+        self.attr_btn.setCheckable(True)
+        self.attr_btn.setChecked(True)
+        quick_method_layout.addWidget(self.attr_btn)
+        
+        # 图像识别快捷按钮
+        self.image_btn = QPushButton("图像识别")
+        self.image_btn.setCheckable(True)
+        quick_method_layout.addWidget(self.image_btn)
+        
+        # 坐标定位快捷按钮
+        self.coord_btn = QPushButton("坐标定位")
+        self.coord_btn.setCheckable(True)
+        quick_method_layout.addWidget(self.coord_btn)
+        
+        # pyautogui快捷按钮
+        self.pyautogui_btn = QPushButton("PyAutoGUI")
+        self.pyautogui_btn.setCheckable(True)
+        quick_method_layout.addWidget(self.pyautogui_btn)
+        
+        # win32gui快捷按钮
+        self.win32gui_btn = QPushButton("Win32GUI")
+        self.win32gui_btn.setCheckable(True)
+        quick_method_layout.addWidget(self.win32gui_btn)
+        
+        # 添加快捷按钮到布局
+        locate_method_layout.addLayout(quick_method_layout)
+        
+        # 按钮组，确保只有一个按钮被选中
+        self.method_btn_group = QButtonGroup()
+        self.method_btn_group.setExclusive(True)
+        self.method_btn_group.addButton(self.attr_btn)
+        self.method_btn_group.addButton(self.image_btn)
+        self.method_btn_group.addButton(self.coord_btn)
+        self.method_btn_group.addButton(self.pyautogui_btn)
+        self.method_btn_group.addButton(self.win32gui_btn)
+        
+        # 传统单选按钮（保持兼容性）
+        traditional_method_layout = QHBoxLayout()
         self.method_group = QButtonGroup()
         
         self.attr_radio = QRadioButton("属性定位")
@@ -224,9 +267,13 @@ class MainWindow(QMainWindow):
         self.method_group.addButton(self.image_radio)
         self.method_group.addButton(self.coord_radio)
         
-        locate_method_layout.addWidget(self.attr_radio)
-        locate_method_layout.addWidget(self.image_radio)
-        locate_method_layout.addWidget(self.coord_radio)
+        traditional_method_layout.addWidget(self.attr_radio)
+        traditional_method_layout.addWidget(self.image_radio)
+        traditional_method_layout.addWidget(self.coord_radio)
+        traditional_method_layout.addStretch()
+        
+        # 添加传统单选按钮到布局
+        locate_method_layout.addLayout(traditional_method_layout)
         
         locate_method_group.setLayout(locate_method_layout)
         code_tab_layout.addWidget(locate_method_group)
@@ -364,10 +411,27 @@ class MainWindow(QMainWindow):
         element_tree_group = QGroupBox("元素树")
         element_tree_layout = QVBoxLayout()
         
+        # 元素树搜索框
+        search_layout = QHBoxLayout()
+        search_layout.addWidget(QLabel("搜索:"))
+        self.element_search_edit = QLineEdit()
+        self.element_search_edit.setPlaceholderText("按元素名称或类型搜索")
+        search_layout.addWidget(self.element_search_edit)
+        self.element_search_btn = QPushButton("搜索")
+        search_layout.addWidget(self.element_search_btn)
+        element_tree_layout.addLayout(search_layout)
+        
+        # 元素树
         self.element_tree = QTreeWidget()
         self.element_tree.setHeaderLabel("元素")
         self.element_tree.setColumnCount(1)
         element_tree_layout.addWidget(self.element_tree)
+        
+        # 加载更多按钮
+        self.load_more_btn = QPushButton("加载更多")
+        self.load_more_btn.setEnabled(False)
+        self.load_more_btn.setToolTip("加载更多层级的元素")
+        element_tree_layout.addWidget(self.load_more_btn)
         
         element_tree_group.setLayout(element_tree_layout)
         layout.addWidget(element_tree_group)
@@ -401,6 +465,23 @@ class MainWindow(QMainWindow):
         self.remove_favorite_btn.clicked.connect(self.remove_from_favorites)
         self.favorite_detail_btn.clicked.connect(self.view_favorite_detail)
         self.wizard_btn.clicked.connect(self.show_wizard)
+        
+        # 定位方式快捷按钮点击事件
+        self.attr_btn.clicked.connect(lambda: self.on_locator_method_changed('attribute'))
+        self.image_btn.clicked.connect(lambda: self.on_locator_method_changed('image'))
+        self.coord_btn.clicked.connect(lambda: self.on_locator_method_changed('coordinate'))
+        self.pyautogui_btn.clicked.connect(lambda: self.on_locator_method_changed('pyautogui'))
+        self.win32gui_btn.clicked.connect(lambda: self.on_locator_method_changed('win32gui'))
+        
+        # 传统单选按钮点击事件
+        self.attr_radio.toggled.connect(lambda checked: self.on_locator_radio_changed(checked, 'attribute'))
+        self.image_radio.toggled.connect(lambda checked: self.on_locator_radio_changed(checked, 'image'))
+        self.coord_radio.toggled.connect(lambda checked: self.on_locator_radio_changed(checked, 'coordinate'))
+        
+        # 元素树相关信号
+        self.load_more_btn.clicked.connect(self.on_load_more_clicked)
+        self.element_search_btn.clicked.connect(self.on_element_search)
+        self.element_search_edit.returnPressed.connect(self.on_element_search)
     
     def refresh_process_list(self):
         """刷新进程列表"""
@@ -453,8 +534,81 @@ class MainWindow(QMainWindow):
             placeholder = QTreeWidgetItem(root_item)
             placeholder.setText(0, "Loading...")
             
+            # 启用加载更多按钮
+            self.load_more_btn.setEnabled(True)
+            
             # 注册展开信号
             self.element_tree.itemExpanded.connect(self.on_item_expanded)
+    
+    def on_load_more_clicked(self):
+        """处理加载更多按钮点击事件"""
+        # 增加加载深度
+        self.element_analyzer.initial_load_depth += 2
+        self.update_status(f"加载深度已增加到: {self.element_analyzer.initial_load_depth}")
+        
+        # 重新加载元素树
+        self.update_element_tree()
+        
+    def on_element_search(self):
+        """处理元素树搜索事件"""
+        keyword = self.element_search_edit.text().lower()
+        
+        if not keyword:
+            # 如果搜索框为空，恢复所有节点
+            self.restore_all_tree_items()
+            return
+        
+        # 遍历所有节点，隐藏不匹配的节点
+        self.filter_tree_items(self.element_tree.invisibleRootItem(), keyword)
+    
+    def filter_tree_items(self, parent_item, keyword):
+        """过滤树节点
+        
+        Args:
+            parent_item: 父节点
+            keyword: 搜索关键字
+        
+        Returns:
+            bool: 是否有匹配的子节点
+        """
+        has_matching_child = False
+        
+        for i in range(parent_item.childCount()):
+            child_item = parent_item.child(i)
+            element = child_item.data(0, Qt.UserRole)
+            
+            if element:
+                # 检查元素是否匹配关键字
+                match = keyword in element.element_type.lower() or (element.name and keyword in element.name.lower())
+                
+                # 递归过滤子节点
+                child_has_match = self.filter_tree_items(child_item, keyword)
+                
+                # 如果当前节点匹配或有匹配的子节点，则显示
+                if match or child_has_match:
+                    child_item.setHidden(False)
+                    # 展开有匹配子节点的父节点
+                    if child_has_match:
+                        child_item.setExpanded(True)
+                    has_matching_child = True
+                else:
+                    child_item.setHidden(True)
+            else:
+                # 非元素节点（如Loading...）
+                child_item.setHidden(True)
+        
+        return has_matching_child
+    
+    def restore_all_tree_items(self):
+        """恢复所有树节点的显示"""
+        def restore_items(parent_item):
+            for i in range(parent_item.childCount()):
+                child_item = parent_item.child(i)
+                child_item.setHidden(False)
+                child_item.setExpanded(False)
+                restore_items(child_item)
+        
+        restore_items(self.element_tree.invisibleRootItem())
     
     def on_item_expanded(self, item):
         """处理树节点展开事件，异步加载子节点"""
@@ -470,7 +624,7 @@ class MainWindow(QMainWindow):
             self.load_child_elements(element, item)
     
     def load_child_elements(self, parent_element, parent_item):
-        """异步加载子元素"""
+        """异步加载子元素，支持分层懒加载"""
         # 使用线程池异步加载子节点
         from PyQt5.QtCore import QThreadPool, QRunnable, pyqtSlot
         
@@ -485,8 +639,52 @@ class MainWindow(QMainWindow):
             @pyqtSlot()
             def run(self):
                 """执行加载任务"""
-                # 在后台线程中获取子元素
-                child_elements = self.parent_element.children
+                try:
+                    # 检查是否已经加载过子元素
+                    if self.parent_element.children:
+                        # 已加载，直接使用
+                        child_elements = self.parent_element.children
+                    elif hasattr(self.parent_element, 'has_children') and self.parent_element.has_children:
+                        # 需要动态加载子元素
+                        from core.element_analyzer import ElementAnalyzer
+                        import pywinauto
+                        
+                        # 重新连接应用并获取父元素
+                        analyzer = ElementAnalyzer()
+                        app = pywinauto.Application(backend='uia').connect(handle=self.parent_element.window_handle)
+                        window = app.window(handle=self.parent_element.window_handle)
+                        
+                        # 构建定位条件
+                        conditions = {}
+                        if self.parent_element.automation_id:
+                            conditions['auto_id'] = self.parent_element.automation_id
+                        elif self.parent_element.name:
+                            conditions['name'] = self.parent_element.name
+                        elif self.parent_element.class_name:
+                            conditions['class_name'] = self.parent_element.class_name
+                        
+                        # 查找父元素
+                        if conditions:
+                            found_element = window.child_window(**conditions)
+                            if found_element.exists():
+                                # 临时存储原始子元素列表
+                                original_children = self.parent_element.children.copy()
+                                
+                                # 加载子元素
+                                analyzer._analyze_element_children(found_element, self.parent_element, self.parent_element.depth + 1)
+                                
+                                # 计算新加载的子元素
+                                new_children = [child for child in self.parent_element.children if child not in original_children]
+                                child_elements = new_children
+                            else:
+                                child_elements = []
+                        else:
+                            child_elements = []
+                    else:
+                        child_elements = []
+                except Exception as e:
+                    print(f"动态加载子元素失败: {e}")
+                    child_elements = []
                 
                 # 在主线程中更新UI
                 from PyQt5.QtCore import QMetaObject, Q_ARG
@@ -509,8 +707,8 @@ class MainWindow(QMainWindow):
             child_item.setData(0, Qt.UserRole, child)
             child_item.setData(0, Qt.UserRole + 1, False)  # 标记为未加载子节点
             
-            # 如果有子元素，添加占位节点
-            if child.children:
+            # 检查是否有子元素或需要后续加载
+            if child.children or (hasattr(child, 'has_children') and child.has_children):
                 placeholder = QTreeWidgetItem(child_item)
                 placeholder.setText(0, "Loading...")
     
@@ -522,6 +720,9 @@ class MainWindow(QMainWindow):
         
         self.current_element = element
         
+        # 计算元素稳定性评分和推荐定位策略
+        self.element_analyzer.calculate_stability_score(element)
+        
         # 更新元素详细信息
         self.update_element_info(element)
         
@@ -530,6 +731,9 @@ class MainWindow(QMainWindow):
         
         # 生成定位代码
         self.generate_locator_code(element)
+        
+        # 显示定位策略建议
+        self.show_locator_suggestions(element)
     
     def update_element_info(self, element):
         """更新元素详细信息"""
@@ -548,11 +752,29 @@ class MainWindow(QMainWindow):
             ("Depth", element.depth),
         ]
         
+        # 添加稳定性评分和推荐定位策略
+        if hasattr(element, 'stability_score') and element.stability_score is not None:
+            properties.append(("定位稳定性评分", f"{element.stability_score}/100"))
+        if hasattr(element, 'locator_strategy') and element.locator_strategy:
+            properties.append(("推荐定位策略", element.locator_strategy))
+        if hasattr(element, 'locator_priority') and element.locator_priority:
+            properties.append(("定位方法优先级", ", ".join(element.locator_priority)))
+        
         # 填充表格
         for row, (key, value) in enumerate(properties):
             self.element_info_table.insertRow(row)
             self.element_info_table.setItem(row, 0, QTableWidgetItem(key))
             self.element_info_table.setItem(row, 1, QTableWidgetItem(str(value)))
+    
+    def show_locator_suggestions(self, element):
+        """显示定位策略建议"""
+        if not hasattr(element, 'stability_suggestions') or not element.stability_suggestions:
+            return
+        
+        # 显示定位策略建议
+        suggestions = "\n".join([f"• {suggestion}" for suggestion in element.stability_suggestions])
+        if suggestions:
+            self.statusBar().showMessage(f"定位建议: {suggestions}")
     
     def update_element_path(self, element):
         """更新元素路径"""
@@ -561,6 +783,23 @@ class MainWindow(QMainWindow):
     
     def generate_locator_code(self, element):
         """生成定位代码"""
+        if not element:
+            return
+        
+        # 确定当前选中的定位方法
+        if self.attr_btn.isChecked():
+            method = 'attribute'
+        elif self.image_btn.isChecked():
+            method = 'image'
+        elif self.coord_btn.isChecked():
+            method = 'coordinate'
+        elif self.pyautogui_btn.isChecked():
+            method = 'pyautogui'
+        elif self.win32gui_btn.isChecked():
+            method = 'win32gui'
+        else:
+            method = 'attribute'  # 默认使用属性定位
+        
         # 生成pywinauto代码
         pywinauto_code = self.code_generator.generate_pywinauto_code(element)
         self.pywinauto_code_edit.setPlainText(pywinauto_code)
@@ -568,6 +807,47 @@ class MainWindow(QMainWindow):
         # 生成uiautomation代码
         uiauto_code = self.code_generator.generate_uiautomation_code(element)
         self.uiauto_code_edit.setPlainText(uiauto_code)
+    
+    def on_locator_method_changed(self, method):
+        """处理定位方式变化事件
+        
+        Args:
+            method: 定位方法，可选值：attribute, image, coordinate, pyautogui, win32gui
+        """
+        # 更新快捷按钮状态
+        self.attr_btn.setChecked(method == 'attribute')
+        self.image_btn.setChecked(method == 'image')
+        self.coord_btn.setChecked(method == 'coordinate')
+        self.pyautogui_btn.setChecked(method == 'pyautogui')
+        self.win32gui_btn.setChecked(method == 'win32gui')
+        
+        # 更新传统单选按钮状态
+        if method == 'attribute':
+            self.attr_radio.setChecked(True)
+        elif method == 'image':
+            self.image_radio.setChecked(True)
+        elif method == 'coordinate':
+            self.coord_radio.setChecked(True)
+        
+        # 更新当前选中的定位方法
+        self.current_locator_method = method
+        
+        # 重新生成定位代码
+        if self.current_element:
+            self.generate_locator_code(self.current_element)
+        
+        self.update_status(f"已切换到{method}定位方式")
+    
+    def on_locator_radio_changed(self, checked, method):
+        """处理传统单选按钮变化事件
+        
+        Args:
+            checked: 是否选中
+            method: 定位方法
+        """
+        if checked:
+            # 同步到快捷按钮
+            self.on_locator_method_changed(method)
     
     def start_capture(self):
         """开始捕获元素"""
@@ -624,14 +904,18 @@ class MainWindow(QMainWindow):
             return
         
         # 确定当前选中的定位方法
-        if self.attr_radio.isChecked():
-            method = 'attribute'
-        elif self.image_radio.isChecked():
-            method = 'image'
-        elif self.coord_radio.isChecked():
-            method = 'coordinate'
+        if hasattr(self, 'current_locator_method'):
+            method = self.current_locator_method
         else:
-            method = 'auto'
+            # 兼容旧的判断方式
+            if self.attr_radio.isChecked():
+                method = 'attribute'
+            elif self.image_radio.isChecked():
+                method = 'image'
+            elif self.coord_radio.isChecked():
+                method = 'coordinate'
+            else:
+                method = 'auto'
         
         try:
             self.update_status(f"正在测试{method}定位...")

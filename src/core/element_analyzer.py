@@ -11,9 +11,14 @@ class ElementAnalyzer:
 
     def __init__(self):
         self.max_depth = 10  # 最大分析深度
+        self.initial_load_depth = 3  # 初始加载深度，可见层级
+        
+        # 元素树缓存，键为 (process_id, window_handle)，值为 (element_tree, timestamp)
+        self.element_tree_cache = {}
+        self.cache_expiry_time = 600  # 缓存过期时间，单位：秒（10分钟）
     
     def analyze_window(self, window):
-        """分析窗口的UI元素结构
+        """分析窗口的UI元素结构，支持缓存机制
         
         Args:
             window: 窗口对象，包含hwnd属性
@@ -25,9 +30,31 @@ class ElementAnalyzer:
             print("无效的窗口对象")
             return None
         
+        import time
+        
         try:
-            # 使用pywinauto分析窗口
             window_handle = window.hwnd
+            
+            # 获取进程ID
+            import win32process
+            _, process_id = win32process.GetWindowThreadProcessId(window_handle)
+            
+            # 检查缓存
+            cache_key = (process_id, window_handle)
+            current_time = time.time()
+            
+            if cache_key in self.element_tree_cache:
+                # 检查缓存是否过期
+                cached_element_tree, cached_time = self.element_tree_cache[cache_key]
+                if current_time - cached_time < self.cache_expiry_time:
+                    print(f"使用缓存的元素树，缓存时间: {time.ctime(cached_time)}")
+                    return cached_element_tree
+                else:
+                    # 缓存过期，删除缓存
+                    print(f"缓存过期，重新分析窗口，过期时间: {time.ctime(cached_time)}")
+                    del self.element_tree_cache[cache_key]
+            
+            # 使用pywinauto分析窗口
             app = pywinauto.Application(backend='uia').connect(handle=window_handle)
             window_element = app.window(handle=window_handle)
             
@@ -37,13 +64,17 @@ class ElementAnalyzer:
             # 递归分析子元素
             self._analyze_element_children(window_element, root_element, 1)
             
+            # 缓存元素树
+            self.element_tree_cache[cache_key] = (root_element, current_time)
+            print(f"元素树已缓存，缓存键: {cache_key}")
+            
             return root_element
         except Exception as e:
             print(f"分析窗口元素失败: {e}")
             return None
     
     def _analyze_element_children(self, parent_pywinauto_element, parent_element, current_depth):
-        """递归分析元素的子元素
+        """递归分析元素的子元素，支持分层懒加载
         
         Args:
             parent_pywinauto_element: 父pywinauto元素
@@ -65,8 +96,13 @@ class ElementAnalyzer:
                 # 添加到父元素
                 parent_element.add_child(child_element)
                 
-                # 递归分析子元素
-                self._analyze_element_children(child_pywinauto_element, child_element, current_depth + 1)
+                # 检查是否需要加载子元素
+                if current_depth < self.initial_load_depth:
+                    # 当前深度小于初始加载深度，递归加载子元素
+                    self._analyze_element_children(child_pywinauto_element, child_element, current_depth + 1)
+                else:
+                    # 当前深度达到初始加载深度，标记该元素有子元素但未加载
+                    child_element.has_children = True
         except Exception as e:
             print(f"分析子元素失败: {e}")
     
@@ -213,3 +249,111 @@ class ElementAnalyzer:
         
         # 最后使用位置信息
         return f"position=({element.x}, {element.y})"
+    
+    def calculate_stability_score(self, element):
+        """计算元素定位稳定性评分
+        
+        Args:
+            element: 元素对象
+            
+        Returns:
+            稳定性评分（0-100）
+        """
+        if not element:
+            return 0
+        
+        # 初始化评分
+        score = 0
+        suggestions = []
+        locator_scores = {}
+        
+        # 基于属性完整性的评分
+        if element.automation_id:
+            score += 35
+            locator_scores['automation_id'] = 35
+        else:
+            suggestions.append("缺少Automation ID，建议优先使用具有稳定Automation ID的元素")
+        
+        if element.name:
+            # 检查名称是否为动态值
+            if len(element.name) > 5 and not any(char.isdigit() for char in element.name):
+                score += 25
+                locator_scores['name'] = 25
+            else:
+                score += 15
+                locator_scores['name'] = 15
+                suggestions.append("元素名称较短或包含数字，可能是动态生成的")
+        else:
+            suggestions.append("缺少元素名称，定位稳定性可能较差")
+        
+        if element.class_name:
+            score += 20
+            locator_scores['class_name'] = 20
+        else:
+            suggestions.append("缺少类名，定位稳定性可能较差")
+        
+        if element.control_type:
+            score += 15
+            locator_scores['control_type'] = 15
+        else:
+            suggestions.append("缺少控件类型，定位稳定性可能较差")
+        
+        if element.depth > 5:
+            score -= 10
+            suggestions.append(f"元素层级较深（深度: {element.depth}），建议优化定位路径")
+        
+        # 确保评分在0-100范围内
+        score = max(0, min(100, score))
+        
+        # 更新元素属性
+        element.stability_score = score
+        element.stability_suggestions = suggestions
+        element.locator_scores = locator_scores
+        
+        # 推荐最佳定位策略
+        self.recommend_locator_strategy(element)
+        
+        return score
+    
+    def recommend_locator_strategy(self, element):
+        """推荐最佳定位策略
+        
+        Args:
+            element: 元素对象
+        """
+        if not element:
+            return
+        
+        # 基于稳定性评分推荐定位策略
+        if element.stability_score >= 80:
+            # 高稳定性，优先使用属性定位
+            best_locator = "attribute"
+        elif element.stability_score >= 50:
+            # 中等稳定性，建议使用属性+图像混合定位
+            best_locator = "hybrid"
+        else:
+            # 低稳定性，建议使用图像定位
+            best_locator = "image"
+        
+        # 基于属性优先级排序定位方法
+        locator_priority = []
+        
+        if element.automation_id:
+            locator_priority.append("automation_id")
+        
+        if element.name and len(element.name) > 5 and not any(char.isdigit() for char in element.name):
+            locator_priority.append("name")
+        
+        if element.class_name:
+            locator_priority.append("class_name")
+        
+        if element.control_type:
+            locator_priority.append("control_type")
+        
+        # 添加坐标和图像定位作为备选
+        locator_priority.append("coordinate")
+        locator_priority.append("image")
+        
+        # 更新元素属性
+        element.locator_strategy = best_locator
+        element.locator_priority = locator_priority

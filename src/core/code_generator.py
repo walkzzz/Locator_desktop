@@ -399,3 +399,218 @@ if hwnd:
             return self.generate_win32gui_code(element)
         else:
             return "# 不支持的定位方法"
+    
+    def generate_batch_code(self, elements, method='attribute'):
+        """生成批量元素定位代码
+        
+        Args:
+            elements: 元素对象列表
+            method: 定位方法，可选值：auto, attribute, image, coordinate, pyautogui, win32gui
+            
+        Returns:
+            批量定位代码字符串
+        """
+        if not elements:
+            return "# 没有元素需要生成代码"
+        
+        # 获取第一个元素的进程ID和窗口句柄
+        first_element = elements[0]
+        
+        if method == 'attribute':
+            return self.generate_batch_pywinauto_code(elements)
+        elif method == 'auto':
+            return self.generate_batch_pywinauto_code(elements)
+        elif method == 'coordinate':
+            return self.generate_batch_coordinate_code(elements)
+        elif method == 'pyautogui':
+            return self.generate_batch_pyautogui_code(elements)
+        elif method == 'win32gui':
+            return self.generate_batch_win32gui_code(elements)
+        elif method == 'image':
+            return self.generate_batch_image_code(elements)
+        else:
+            return "# 不支持的批量定位方法"
+    
+    def generate_batch_pywinauto_code(self, elements):
+        """生成批量pywinauto定位代码
+        
+        Args:
+            elements: 元素对象列表
+            
+        Returns:
+            批量pywinauto定位代码字符串
+        """
+        if not elements:
+            return "# 没有元素需要生成代码"
+        
+        # 获取第一个元素的进程ID和窗口句柄
+        first_element = elements[0]
+        
+        # 构建应用连接代码
+        app_code = f"# 连接到应用\napp = Application(backend='uia').connect(process={first_element.process_id})\n"
+        
+        # 构建窗口定位代码
+        window_code = f"# 获取窗口\nwindow = app.window(handle={first_element.window_handle})\n"
+        
+        # 构建元素定位代码
+        element_codes = []
+        action_codes = []
+        
+        for i, element in enumerate(elements):
+            element_var_name = f"element_{i+1}"
+            element_code = self._build_pywinauto_element_code(element)
+            # 替换元素变量名
+            element_code = element_code.replace("element", element_var_name)
+            element_codes.append(element_code)
+            
+            # 构建操作示例代码
+            action_code = self._build_pywinauto_action_code(element)
+            # 替换元素变量名
+            action_code = action_code.replace("element", element_var_name)
+            action_codes.append(f"# 元素{i+1}操作示例\n{action_code}")
+        
+        # 合并所有代码
+        element_code_str = "\n".join(element_codes)
+        action_code_str = "\n\n".join(action_codes)
+        
+        return f"from pywinauto.application import Application\n\n{app_code}{window_code}{element_code_str}\n\n{action_code_str}"
+    
+    def generate_batch_coordinate_code(self, elements):
+        """生成批量坐标定位代码
+        
+        Args:
+            elements: 元素对象列表
+            
+        Returns:
+            批量坐标定位代码字符串
+        """
+        if not elements:
+            return "# 没有元素需要生成代码"
+        
+        code = f"# 批量坐标定位代码\nimport win32api\nimport win32con\n\n"
+        
+        for i, element in enumerate(elements):
+            # 计算元素中心坐标
+            center_x = element.x + element.width // 2
+            center_y = element.y + element.height // 2
+            
+            code += f"# 元素{i+1}：{element.element_type} - {element.name or 'Unnamed'}\n"
+            code += f"element_{i+1}_x = {element.x}\nelement_{i+1}_y = {element.y}\nelement_{i+1}_width = {element.width}\nelement_{i+1}_height = {element.height}\n"
+            code += f"center_x_{i+1} = {center_x}\ncenter_y_{i+1} = {center_y}\n"
+            code += f"# 移动鼠标到元素{i+1}中心\nwin32api.SetCursorPos((center_x_{i+1}, center_y_{i+1}))\n"
+            code += f"# 模拟鼠标点击\nwin32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)\nwin32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)\n\n"
+        
+        return code
+    
+    def generate_batch_pyautogui_code(self, elements):
+        """生成批量pyautogui定位代码
+        
+        Args:
+            elements: 元素对象列表
+            
+        Returns:
+            批量pyautogui定位代码字符串
+        """
+        if not elements:
+            return "# 没有元素需要生成代码"
+        
+        code = f"# 批量pyautogui定位代码\nimport pyautogui\n\n"
+        
+        for i, element in enumerate(elements):
+            # 计算元素中心坐标
+            center_x = element.x + element.width // 2
+            center_y = element.y + element.height // 2
+            
+            code += f"# 元素{i+1}：{element.element_type} - {element.name or 'Unnamed'}\n"
+            code += f"element_{i+1}_x = {element.x}\nelement_{i+1}_y = {element.y}\n"
+            code += f"center_x_{i+1} = {center_x}\ncenter_y_{i+1} = {center_y}\n"
+            
+            # 添加元素特定操作
+            action_map = {
+                'Button': f"# 点击按钮\npyautogui.click(center_x_{i+1}, center_y_{i+1})\n",
+                'Edit': f"# 输入文本\npyautogui.click(center_x_{i+1}, center_y_{i+1})\npyautogui.write('测试文本{i+1}')\n",
+                'ComboBox': f"# 下拉框操作\npyautogui.click(center_x_{i+1}, center_y_{i+1})\npyautogui.press('down')\npyautogui.press('enter')\n",
+                'CheckBox': f"# 切换复选框\npyautogui.click(center_x_{i+1}, center_y_{i+1})\n",
+                'RadioButton': f"# 选择单选按钮\npyautogui.click(center_x_{i+1}, center_y_{i+1})\n",
+                'MenuItem': f"# 点击菜单项\npyautogui.click(center_x_{i+1}, center_y_{i+1})\n"
+            }
+            
+            action = action_map.get(element.element_type, f"# 根据元素类型添加操作\npyautogui.click(center_x_{i+1}, center_y_{i+1})\n")
+            code += action + "\n"
+        
+        return code
+    
+    def generate_batch_win32gui_code(self, elements):
+        """生成批量win32gui定位代码
+        
+        Args:
+            elements: 元素对象列表
+            
+        Returns:
+            批量win32gui定位代码字符串
+        """
+        if not elements:
+            return "# 没有元素需要生成代码"
+        
+        code = f"# 批量win32gui定位代码\nimport win32gui\nimport win32api\nimport win32con\n\n"
+        
+        for i, element in enumerate(elements):
+            code += f"# 元素{i+1}：{element.element_type} - {element.name or 'Unnamed'}\n"
+            code += f"element_{i+1}_rect = ({element.x}, {element.y}, {element.x + element.width}, {element.y + element.height})\n"
+            code += f"# 获取窗口句柄\nElement_{i+1}_hwnd = win32gui.WindowFromPoint((element_{i+1}_rect[0], element_{i+1}_rect[1]))\n"
+            code += f"# 计算元素中心坐标\ncenter_x_{i+1} = element_{i+1}_rect[0] + (element_{i+1}_rect[2] - element_{i+1}_rect[0]) // 2\n"
+            code += f"center_y_{i+1} = element_{i+1}_rect[1] + (element_{i+1}_rect[3] - element_{i+1}_rect[1]) // 2\n"
+            
+            # 添加元素特定操作
+            action_map = {
+                'Button': f"if Element_{i+1}_hwnd:\n    # 发送点击消息\n    lParam = win32api.MAKELONG(center_x_{i+1}, center_y_{i+1})\n    win32gui.SendMessage(Element_{i+1}_hwnd, win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON, lParam)\n    win32gui.SendMessage(Element_{i+1}_hwnd, win32con.WM_LBUTTONUP, 0, lParam)\n",
+                'Edit': f"if Element_{i+1}_hwnd:\n    # 设置文本\n    win32gui.SetWindowText(Element_{i+1}_hwnd, '测试文本{i+1}')\n",
+                'ComboBox': f"if Element_{i+1}_hwnd:\n    # 下拉框操作\n    win32gui.SendMessage(Element_{i+1}_hwnd, win32con.CBM_GETCOUNT, 0, 0)\n    win32gui.SendMessage(Element_{i+1}_hwnd, win32con.CBM_SETCURSEL, 0, 0)\n",
+                'CheckBox': f"if Element_{i+1}_hwnd:\n    # 切换复选框状态\n    win32gui.SendMessage(Element_{i+1}_hwnd, win32con.BM_CLICK, 0, 0)\n",
+                'RadioButton': f"if Element_{i+1}_hwnd:\n    # 选择单选按钮\n    win32gui.SendMessage(Element_{i+1}_hwnd, win32con.BM_CLICK, 0, 0)\n"
+            }
+            
+            action = action_map.get(element.element_type, f"if Element_{i+1}_hwnd:\n    # 根据元素类型添加win32gui操作\n")
+            code += action + "\n"
+        
+        return code
+    
+    def generate_batch_image_code(self, elements):
+        """生成批量图像识别定位代码
+        
+        Args:
+            elements: 元素对象列表
+            
+        Returns:
+            批量图像识别定位代码字符串
+        """
+        if not elements:
+            return "# 没有元素需要生成代码"
+        
+        code = f"# 批量图像识别定位代码\nimport cv2\nimport numpy as np\nfrom PIL import ImageGrab\nimport win32api\nimport win32con\n\n"
+        
+        for i, element in enumerate(elements):
+            template_path = f"element_template_{i+1}.png"
+            code += f"# 元素{i+1}：{element.element_type} - {element.name or 'Unnamed'}\n"
+            code += f"template_path_{i+1} = '{template_path}'\ntemplate_{i+1} = cv2.imread(template_path_{i+1})\n"
+        
+        # 添加批量匹配代码
+        code += "\n# 获取屏幕截图\nscreenshot = ImageGrab.grab()\nscreenshot = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)\n\n"
+        
+        for i, element in enumerate(elements):
+            code += f"# 元素{i+1}模板匹配\nresult_{i+1} = cv2.matchTemplate(screenshot, template_{i+1}, cv2.TM_CCOEFF_NORMED)\n"
+            code += f"min_val_{i+1}, max_val_{i+1}, min_loc_{i+1}, max_loc_{i+1} = cv2.minMaxLoc(result_{i+1})\n"
+            code += f"# 设置匹配阈值\nthreshold = 0.8\n\n"
+            code += f"if max_val_{i+1} >= threshold:\n"
+            code += f"    # 计算元素中心坐标\n"
+            code += f"    center_x_{i+1} = max_loc_{i+1}[0] + template_{i+1}.shape[1] // 2\n"
+            code += f"    center_y_{i+1} = max_loc_{i+1}[1] + template_{i+1}.shape[0] // 2\n"
+            code += f"    # 移动鼠标到元素中心\n"
+            code += f"    win32api.SetCursorPos((center_x_{i+1}, center_y_{i+1}))\n"
+            code += f"    # 模拟鼠标点击\n"
+            code += f"    win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)\n"
+            code += f"    win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)\n"
+            code += f"else:\n"
+            code += f"    print('未找到元素{i+1}')\n\n"
+        
+        return code

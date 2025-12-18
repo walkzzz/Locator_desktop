@@ -46,13 +46,18 @@ class ElementCapture:
                 
                 # 检查是否按下了Ctrl键
                 if win32api.GetKeyState(win32con.VK_CONTROL) < 0:
-                    captured_element = self.last_captured_element
+                    if self.last_captured_element:
+                        captured_element = self.last_captured_element
+                        print(f"确认捕获元素: {captured_element}")
+                    else:
+                        print("未捕获到任何元素，请确保鼠标移动到了有效元素上")
                     break
                 
                 # 短暂延迟，减少CPU占用
                 time.sleep(0.1)
         except Exception as e:
-            print(f"捕获元素时发生错误: {e}")
+            print(f"捕获元素时发生错误: {type(e).__name__}: {str(e)}")
+            print(f"错误解决方案: 1. 确保目标应用正在运行 2. 检查应用是否具有UIA支持 3. 尝试使用其他捕获方式")
         finally:
             self.capturing = False
         
@@ -108,7 +113,14 @@ class ElementCapture:
                 if restore_needed:
                     win32gui.ShowWindow(hwnd, win32con.SW_MINIMIZE)
         except Exception as e:
-            print(f"使用pywinauto获取元素失败: {e}")
+            error_type = type(e).__name__
+            error_msg = str(e)
+            print(f"使用pywinauto获取元素失败: {error_type}: {error_msg}")
+            print(f"错误解决方案: ")
+            print(f"1. 检查窗口是否正常显示，未被其他窗口遮挡")
+            print(f"2. 确保应用程序正在正常运行")
+            print(f"3. 尝试手动激活目标窗口后再次捕获")
+            print(f"4. 对于特殊应用，尝试使用图像识别捕获方式")
         
         return None
     
@@ -250,11 +262,21 @@ class ElementCapture:
             定位是否成功
         """
         try:
-            if not element or not element.window_handle:
+            if not element:
+                print("测试定位失败: 无效的元素对象")
+                return False
+            
+            if not element.window_handle:
+                print("测试定位失败: 元素缺少窗口句柄")
+                print("解决方案: 重新捕获元素或确保元素包含有效的窗口句柄")
                 return False
             
             # 检测应用类型
-            app_type = self._detect_application_type(element.window_handle)
+            try:
+                app_type = self._detect_application_type(element.window_handle)
+            except Exception as e:
+                print(f"检测应用类型失败: {type(e).__name__}: {str(e)}")
+                app_type = 'Unknown'
             
             # 根据应用类型选择合适的backend
             if app_type == 'Qt' or app_type in ['MFC', 'WinForms']:
@@ -264,52 +286,89 @@ class ElementCapture:
             else:
                 backends = ['uia', 'win32']  # 默认先尝试uia backend
             
+            print(f"测试定位: 应用类型={app_type}, 尝试backends={backends}")
+            
             # 尝试不同的backend
             for backend in backends:
                 try:
                     # 使用pywinauto测试定位
+                    print(f"尝试使用{backend} backend定位...")
                     app = pywinauto.Application(backend=backend).connect(handle=element.window_handle)
                     window = app.window(handle=element.window_handle)
                     
+                    # 检查窗口是否存在
+                    if not window.exists():
+                        print(f"{backend} backend: 窗口不存在")
+                        continue
+                    
                     # 根据元素属性构建定位条件
-                    conditions = {}
+                    conditions_list = []
                     
+                    # 条件1: 使用automation_id
                     if element.automation_id:
-                        conditions['auto_id' if backend == 'uia' else 'id'] = element.automation_id
-                        try:
-                            found_element = window.child_window(**conditions)
-                            if found_element.exists():
-                                return True
-                        except Exception as e:
-                            print(f"使用{backend} backend根据automation_id查找失败: {e}")
+                        conditions = {'auto_id' if backend == 'uia' else 'id': element.automation_id}
+                        conditions_list.append(("Automation ID", conditions))
                     
-                    # 根据名称查找
+                    # 条件2: 使用名称
                     if element.name:
                         conditions = {'name': element.name}
-                        try:
-                            found_element = window.child_window(**conditions)
-                            if found_element.exists():
-                                return True
-                        except Exception as e:
-                            print(f"使用{backend} backend根据名称查找失败: {e}")
+                        conditions_list.append(("Name", conditions))
                     
-                    # 根据类名查找
+                    # 条件3: 使用类名
                     if element.class_name:
                         conditions = {'class_name': element.class_name}
+                        conditions_list.append(("Class Name", conditions))
+                    
+                    # 条件4: 使用名称+类名
+                    if element.name and element.class_name:
+                        conditions = {'name': element.name, 'class_name': element.class_name}
+                        conditions_list.append(("Name+Class Name", conditions))
+                    
+                    # 条件5: 使用control_type
+                    if element.control_type:
+                        conditions = {'control_type': element.control_type}
+                        conditions_list.append(("Control Type", conditions))
+                    
+                    if not conditions_list:
+                        print(f"{backend} backend: 元素缺少定位属性")
+                        continue
+                    
+                    # 尝试不同的定位条件
+                    for condition_name, conditions in conditions_list:
                         try:
+                            print(f"  尝试条件: {condition_name} = {conditions}")
                             found_element = window.child_window(**conditions)
                             if found_element.exists():
+                                print(f"  ✓ 使用{backend} backend的{condition_name}定位成功")
                                 return True
+                            else:
+                                print(f"  ✗ 使用{backend} backend的{condition_name}定位失败，元素不存在")
                         except Exception as e:
-                            print(f"使用{backend} backend根据类名查找失败: {e}")
+                            print(f"  ✗ 使用{backend} backend的{condition_name}定位失败: {type(e).__name__}: {str(e)}")
                     
                 except Exception as e:
-                    print(f"使用{backend} backend测试元素定位失败: {e}")
+                    error_type = type(e).__name__
+                    error_msg = str(e)
+                    print(f"{backend} backend定位失败: {error_type}: {error_msg}")
+                    print(f"  解决方案: 检查应用是否正在运行，窗口是否正常显示")
                     continue
             
+            print("所有定位方式均失败")
+            print("解决方案: ")
+            print("1. 尝试重新捕获元素")
+            print("2. 检查元素属性是否已变化")
+            print("3. 考虑使用图像识别定位")
+            print("4. 确认应用程序没有更新或重启")
             return False
         except Exception as e:
-            print(f"测试元素定位失败: {e}")
+            error_type = type(e).__name__
+            error_msg = str(e)
+            print(f"测试元素定位失败: {error_type}: {error_msg}")
+            print("解决方案: ")
+            print("1. 确保元素对象有效且包含必要属性")
+            print("2. 检查应用程序是否正在运行")
+            print("3. 尝试重新捕获元素")
+            print("4. 检查应用是否具有UIA支持")
             return False
     
     def __init__(self):
@@ -320,7 +379,7 @@ class ElementCapture:
         self.screenshot_time = 0  # 截图时间
     
     def capture_element_by_image(self, image_path, confidence=0.8):
-        """通过图像识别捕获元素
+        """通过图像识别捕获元素，使用SIFT/ORB特征匹配
         
         Args:
             image_path: 图像文件路径
@@ -337,8 +396,8 @@ class ElementCapture:
             
             # 检查模板缓存
             if image_path in self.template_cache:
-                # 使用缓存的模板
-                template = self.template_cache[image_path]
+                # 使用缓存的模板和特征
+                template, template_gray, template_kp, template_des = self.template_cache[image_path]
             else:
                 # 读取模板图像
                 template = cv2.imread(image_path)
@@ -349,8 +408,15 @@ class ElementCapture:
                 # 图像预处理：裁剪边缘冗余区域、调整对比度
                 template = self._preprocess_image(template)
                 
-                # 缓存模板
-                self.template_cache[image_path] = template
+                # 转换为灰度图
+                template_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+                
+                # 使用ORB特征检测器提取特征
+                orb = cv2.ORB_create()
+                template_kp, template_des = orb.detectAndCompute(template_gray, None)
+                
+                # 缓存模板和特征
+                self.template_cache[image_path] = (template, template_gray, template_kp, template_des)
             
             # 获取屏幕截图，带缓存机制
             current_time = time.time()
@@ -362,9 +428,10 @@ class ElementCapture:
             
             # 使用缓存的截图
             screenshot = self.screenshot_cache
+            screenshot_gray = cv2.cvtColor(screenshot, cv2.COLOR_BGR2GRAY)
             
-            # 多级缩放匹配
-            max_val, max_loc = self._multi_scale_match(screenshot, template)
+            # 特征匹配
+            max_val, max_loc, matched_template = self._feature_match(screenshot, screenshot_gray, template, template_kp, template_des)
             
             if max_val >= confidence:
                 # 创建元素对象
@@ -372,8 +439,8 @@ class ElementCapture:
                 element.element_type = "ImageMatched"
                 element.x = max_loc[0]
                 element.y = max_loc[1]
-                element.width = template.shape[1]
-                element.height = template.shape[0]
+                element.width = matched_template.shape[1]
+                element.height = matched_template.shape[0]
                 element.name = f"ImageMatched_{max_val:.2f}"
                 
                 return element
@@ -400,6 +467,8 @@ class ElementCapture:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         _, thresh = cv2.threshold(gray, 1, 255, cv2.THRESH_BINARY)
         coords = cv2.findNonZero(thresh)
+        if coords is None:
+            return image
         x, y, w, h = cv2.boundingRect(coords)
         cropped = image[y:y+h, x:x+w]
         
@@ -410,59 +479,74 @@ class ElementCapture:
         
         return adjusted
     
-    def _multi_scale_match(self, screenshot, template):
-        """多级缩放匹配
+    def _feature_match(self, screenshot, screenshot_gray, template, template_kp, template_des):
+        """使用ORB特征匹配图像
         
         Args:
-            screenshot: 截图图像
-            template: 模板图像
+            screenshot: 截图图像（彩色）
+            screenshot_gray: 截图图像（灰度）
+            template: 模板图像（彩色）
+            template_kp: 模板特征点
+            template_des: 模板特征描述符
             
         Returns:
-            (最大匹配值, 最大匹配位置)
+            (匹配置信度, 匹配位置, 匹配的模板图像)
         """
         import cv2
         import numpy as np
         
-        # 缩放因子范围
-        scales = np.linspace(0.8, 1.2, 5)  # 5个缩放级别，从0.8到1.2
+        # 使用ORB特征检测器提取截图特征
+        orb = cv2.ORB_create()
+        screenshot_kp, screenshot_des = orb.detectAndCompute(screenshot_gray, None)
         
-        max_val = 0
-        max_loc = (0, 0)
+        # 检查是否检测到特征点
+        if len(screenshot_kp) < 10 or len(template_kp) < 10:
+            return 0.0, (0, 0), template
         
-        # 先使用低分辨率快速粗匹配
-        small_screenshot = cv2.resize(screenshot, (0, 0), fx=0.5, fy=0.5)
-        small_template = cv2.resize(template, (0, 0), fx=0.5, fy=0.5)
+        # 使用BFMatcher进行特征匹配
+        bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+        matches = bf.match(template_des, screenshot_des)
         
-        # 快速粗匹配
-        result = cv2.matchTemplate(small_screenshot, small_template, cv2.TM_CCOEFF_NORMED)
-        _, temp_max_val, _, temp_max_loc = cv2.minMaxLoc(result)
+        # 根据匹配距离排序
+        matches = sorted(matches, key=lambda x: x.distance)
         
-        if temp_max_val > max_val:
-            max_val = temp_max_val
-            max_loc = (temp_max_loc[0] * 2, temp_max_loc[1] * 2)  # 恢复原始尺寸
+        # 计算匹配置信度
+        good_matches = [m for m in matches if m.distance < 50]  # 距离阈值，可调整
+        if len(good_matches) < 5:
+            return 0.0, (0, 0), template
         
-        # 对候选区域进行高分辨率精确匹配
+        confidence = min(len(good_matches) / 20.0, 1.0)  # 归一化置信度，最高1.0
+        
+        # 获取匹配点坐标
+        template_pts = np.float32([template_kp[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+        screenshot_pts = np.float32([screenshot_kp[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+        
+        # 使用RANSAC计算单应性矩阵
+        M, mask = cv2.findHomography(template_pts, screenshot_pts, cv2.RANSAC, 5.0)
+        
+        if M is None:
+            return 0.0, (0, 0), template
+        
+        # 获取模板的边界框
         h, w = template.shape[:2]
-        search_region = screenshot[max(0, max_loc[1]-h//2):max_loc[1]+h*2, max(0, max_loc[0]-w//2):max_loc[0]+w*2]
+        pts = np.float32([[0, 0], [0, h-1], [w-1, h-1], [w-1, 0]]).reshape(-1, 1, 2)
         
-        for scale in scales:
-            # 缩放模板
-            scaled_template = cv2.resize(template, (0, 0), fx=scale, fy=scale)
-            sh, sw = scaled_template.shape[:2]
-            
-            if sh > search_region.shape[0] or sw > search_region.shape[1]:
-                continue
-            
-            # 模板匹配
-            result = cv2.matchTemplate(search_region, scaled_template, cv2.TM_CCOEFF_NORMED)
-            _, temp_max_val, _, temp_max_loc = cv2.minMaxLoc(result)
-            
-            if temp_max_val > max_val:
-                max_val = temp_max_val
-                # 转换为原始图像坐标
-                max_loc = (max_loc[0]-w//2+temp_max_loc[0], max_loc[1]-h//2+temp_max_loc[1])
+        # 转换模板边界框到截图中的位置
+        dst = cv2.perspectiveTransform(pts, M)
         
-        return max_val, max_loc
+        # 计算匹配位置和尺寸
+        x_coords = [int(pt[0][0]) for pt in dst]
+        y_coords = [int(pt[0][1]) for pt in dst]
+        min_x, max_x = min(x_coords), max(x_coords)
+        min_y, max_y = min(y_coords), max(y_coords)
+        
+        # 确保坐标在截图范围内
+        min_x = max(0, min_x)
+        min_y = max(0, min_y)
+        max_x = min(screenshot.shape[1], max_x)
+        max_y = min(screenshot.shape[0], max_y)
+        
+        return confidence, (min_x, min_y), template
     
     def batch_capture_element(self):
         """批量捕获元素，支持框选区域内的多个元素
