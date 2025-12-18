@@ -37,6 +37,12 @@ class Element:
         
         # 元素特定属性
         self.attributes = {}    # 其他自定义属性
+        
+        # 定位稳定性相关属性
+        self.stability_score = None  # 定位稳定性评分（0-100）
+        self.stability_suggestions = []  # 定位优化建议
+        self.locator_strategy = None  # 推荐的定位策略
+        self.locator_scores = {}  # 各定位方法的评分
     
     def __str__(self):
         """字符串表示"""

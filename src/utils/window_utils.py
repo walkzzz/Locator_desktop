@@ -36,7 +36,7 @@ class WindowUtils:
     
     @staticmethod
     def get_windows_by_pid(pid):
-        """根据进程ID获取窗口
+        """根据进程ID获取窗口，包括可见和最小化窗口
         
         Args:
             pid: 进程ID
@@ -47,22 +47,79 @@ class WindowUtils:
         result = []
         
         def enum_windows_callback(hwnd, windows):
-            if win32gui.IsWindowVisible(hwnd):
-                window_pid = win32process.GetWindowThreadProcessId(hwnd)[1]
-                if window_pid == pid:
-                    title = win32gui.GetWindowText(hwnd)
-                    if title:
-                        # 创建一个简单的窗口对象，包含必要的属性
-                        window_obj = type('Window', (), {
-                            'hwnd': hwnd,
-                            'title': title,
-                            'pid': pid
-                        })()
-                        windows.append(window_obj)
+            # 获取窗口进程ID
+            window_pid = win32process.GetWindowThreadProcessId(hwnd)[1]
+            if window_pid == pid:
+                title = win32gui.GetWindowText(hwnd)
+                # 不管窗口是否可见，都添加到列表中
+                is_visible = win32gui.IsWindowVisible(hwnd)
+                is_minimized = win32gui.IsIconic(hwnd)
+                is_enabled = win32gui.IsWindowEnabled(hwnd)
+                
+                # 创建一个简单的窗口对象，包含必要的属性
+                window_obj = type('Window', (), {
+                    'hwnd': hwnd,
+                    'title': title,
+                    'pid': pid,
+                    'is_visible': is_visible,
+                    'is_minimized': is_minimized,
+                    'is_enabled': is_enabled
+                })()
+                windows.append(window_obj)
             return True
         
         win32gui.EnumWindows(enum_windows_callback, result)
         return result
+    
+    @staticmethod
+    def is_window_minimized(hwnd):
+        """检查窗口是否最小化
+        
+        Args:
+            hwnd: 窗口句柄
+            
+        Returns:
+            True if window is minimized, False otherwise
+        """
+        return win32gui.IsIconic(hwnd)
+    
+    @staticmethod
+    def restore_window(hwnd):
+        """恢复最小化的窗口
+        
+        Args:
+            hwnd: 窗口句柄
+        """
+        if win32gui.IsIconic(hwnd):
+            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+    
+    @staticmethod
+    def get_window_style(hwnd):
+        """获取窗口样式
+        
+        Args:
+            hwnd: 窗口句柄
+            
+        Returns:
+            窗口样式值
+        """
+        return win32gui.GetWindowLong(hwnd, win32con.GWL_STYLE)
+    
+    @staticmethod
+    def is_window_transparent(hwnd):
+        """检查窗口是否透明
+        
+        Args:
+            hwnd: 窗口句柄
+            
+        Returns:
+            True if window is transparent, False otherwise
+        """
+        try:
+            style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
+            return style & win32con.WS_EX_LAYERED == win32con.WS_EX_LAYERED
+        except Exception:
+            return False
     
     @staticmethod
     def get_window_rect(window):

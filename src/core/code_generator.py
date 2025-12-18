@@ -265,12 +265,118 @@ class CodeGenerator:
         
         return code
     
+    def generate_pyautogui_code(self, element):
+        """生成pyautogui定位代码
+        
+        Args:
+            element: 元素对象
+            
+        Returns:
+            pyautogui定位代码字符串
+        """
+        if not element:
+            return ""
+        
+        code = """import pyautogui
+
+# 元素坐标
+x = {element.x}
+y = {element.y}
+width = {element.width}
+height = {element.height}
+
+# 计算元素中心坐标
+center_x = x + width // 2
+center_y = y + height // 2
+
+# 操作示例"""
+        
+        # 添加元素特定操作
+        action_code = self._build_pyautogui_action_code(element)
+        
+        return f"{code}\n{action_code}"
+    
+    def _build_pyautogui_action_code(self, element):
+        """构建pyautogui操作示例代码
+        
+        Args:
+            element: 元素对象
+            
+        Returns:
+            操作示例代码字符串
+        """
+        action_map = {
+            'Button': "# 点击按钮\npyautogui.click(center_x, center_y)\n",
+            'Edit': "# 输入文本\npyautogui.click(center_x, center_y)\npyautogui.write('测试文本')\n",
+            'ComboBox': "# 下拉框操作\npyautogui.click(center_x, center_y)\npyautogui.press('down')\npyautogui.press('enter')\n",
+            'CheckBox': "# 切换复选框\npyautogui.click(center_x, center_y)\n",
+            'RadioButton': "# 选择单选按钮\npyautogui.click(center_x, center_y)\n",
+            'MenuItem': "# 点击菜单项\npyautogui.click(center_x, center_y)\n"
+        }
+        
+        return action_map.get(element.element_type, f"# 根据元素类型添加操作\npyautogui.click(center_x, center_y)\n")
+    
+    def generate_win32gui_code(self, element):
+        """生成win32gui定位代码
+        
+        Args:
+            element: 元素对象
+            
+        Returns:
+            win32gui定位代码字符串
+        """
+        if not element:
+            return ""
+        
+        code = """import win32gui
+import win32api
+import win32con
+
+# 元素信息
+element_rect = ({element.x}, {element.y}, {element.x + element.width}, {element.y + element.height})
+
+# 获取窗口句柄
+hwnd = win32gui.WindowFromPoint((element.x, element.y))
+
+if hwnd:
+    print(f"找到窗口: {win32gui.GetWindowText(hwnd)}")
+    
+    # 计算元素中心坐标
+    center_x = element.x + element.width // 2
+    center_y = element.y + element.height // 2
+    
+    # 操作示例"""
+        
+        # 添加元素特定操作
+        action_code = self._build_win32gui_action_code(element)
+        
+        return f"{code}\n{action_code}\n"
+    
+    def _build_win32gui_action_code(self, element):
+        """构建win32gui操作示例代码
+        
+        Args:
+            element: 元素对象
+            
+        Returns:
+            操作示例代码字符串
+        """
+        action_map = {
+            'Button': "    # 发送点击消息\n    lParam = win32api.MAKELONG(center_x, center_y)\n    win32gui.SendMessage(hwnd, win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON, lParam)\n    win32gui.SendMessage(hwnd, win32con.WM_LBUTTONUP, 0, lParam)\n",
+            'Edit': "    # 设置文本\n    win32gui.SetWindowText(hwnd, '测试文本')\n",
+            'ComboBox': "    # 下拉框操作\n    # 这里需要根据实际情况调整消息类型\n    win32gui.SendMessage(hwnd, win32con.CBM_GETCOUNT, 0, 0)\n    win32gui.SendMessage(hwnd, win32con.CBM_SETCURSEL, 0, 0)\n",
+            'CheckBox': "    # 切换复选框状态\n    win32gui.SendMessage(hwnd, win32con.BM_CLICK, 0, 0)\n",
+            'RadioButton': "    # 选择单选按钮\n    win32gui.SendMessage(hwnd, win32con.BM_CLICK, 0, 0)\n"
+        }
+        
+        return action_map.get(element.element_type, "    # 根据元素类型添加win32gui操作\n")
+    
     def generate_code_by_method(self, element, method):
         """根据指定方法生成定位代码
         
         Args:
             element: 元素对象
-            method: 定位方法，可选值：auto, attribute, image, coordinate
+            method: 定位方法，可选值：auto, attribute, image, coordinate, pyautogui, win32gui
             
         Returns:
             定位代码字符串
@@ -287,5 +393,9 @@ class CodeGenerator:
             return self.generate_image_recognition_code(element)
         elif method == 'coordinate':
             return self.generate_coordinate_code(element)
+        elif method == 'pyautogui':
+            return self.generate_pyautogui_code(element)
+        elif method == 'win32gui':
+            return self.generate_win32gui_code(element)
         else:
             return "# 不支持的定位方法"

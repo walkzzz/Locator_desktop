@@ -37,3 +37,9 @@ htmlcov/
 *.db
 *.sqlite
 *.sqlite3
+
+# Python编译文件
+__pycache__/
+*.pyc
+*.pyo
+*.pyd

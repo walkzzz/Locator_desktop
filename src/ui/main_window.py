@@ -5,7 +5,8 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QGroupBox, QLabel, QLineEdit, QPushButton, QTreeWidget, QTreeWidgetItem,
     QTextEdit, QComboBox, QTableWidget, QTableWidgetItem, QGridLayout,
-    QTabWidget, QRadioButton, QButtonGroup, QMessageBox
+    QTabWidget, QRadioButton, QButtonGroup, QMessageBox, QFileDialog,
+    QWizard, QWizardPage, QVBoxLayout
 )
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont, QIcon
@@ -13,6 +14,10 @@ from PyQt5.QtGui import QFont, QIcon
 from core.element_capture import ElementCapture
 from core.element_analyzer import ElementAnalyzer
 from core.code_generator import CodeGenerator
+from core.history_manager import HistoryManager
+from core.favorites_manager import FavoritesManager
+from core.plugin_manager import PluginManager
+from core.api_service import APIService
 from utils.window_utils import WindowUtils
 from utils.process_utils import ProcessUtils
 
@@ -31,6 +36,20 @@ class MainWindow(QMainWindow):
         self.code_generator = CodeGenerator()
         self.window_utils = WindowUtils()
         self.process_utils = ProcessUtils()
+        self.history_manager = HistoryManager()
+        self.favorites_manager = FavoritesManager()
+        self.plugin_manager = PluginManager()
+        
+        # 加载和初始化插件
+        self.plugin_manager.load_plugins()
+        self.plugin_manager.initialize_plugins(self)
+        
+        # 初始化API服务
+        self.api_service = APIService(self)
+        
+        # 启动API服务
+        self.api_service.start()
+        self.update_status("API服务已启动，端口: 5000")
         
         # 当前选中的元素
         self.current_element = None
@@ -43,9 +62,18 @@ class MainWindow(QMainWindow):
         
         # 初始化应用列表
         self.refresh_process_list()
+        
+        # 初始化历史记录
+        self.refresh_history_list()
+        
+        # 初始化收藏夹
+        self.refresh_favorites_list()
     
     def init_ui(self):
         """初始化UI布局"""
+        # 设置状态栏
+        self.statusBar().showMessage("就绪")
+        
         # 中心部件
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -56,6 +84,14 @@ class MainWindow(QMainWindow):
         # 顶部工具栏
         toolbar = self.create_toolbar()
         main_layout.addWidget(toolbar)
+        
+        # 添加向导式操作按钮
+        wizard_layout = QHBoxLayout()
+        self.wizard_btn = QPushButton("启动向导")
+        self.wizard_btn.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold;")
+        wizard_layout.addWidget(self.wizard_btn)
+        wizard_layout.addStretch()
+        main_layout.addLayout(wizard_layout)
         
         # 主分割器
         main_splitter = QSplitter(Qt.Horizontal)
@@ -80,6 +116,12 @@ class MainWindow(QMainWindow):
         # 设置分割器比例
         main_splitter.setSizes([400, 800])
         right_splitter.setSizes([400, 400])
+        
+        # 创建向导对话框
+        self.create_wizard_dialog()
+        
+        # 初始化日志记录
+        self.init_logging()
     
     def create_toolbar(self):
         """创建顶部工具栏"""
@@ -159,6 +201,14 @@ class MainWindow(QMainWindow):
         panel = QWidget()
         layout = QVBoxLayout(panel)
         
+        # 主标签页：代码生成和历史记录
+        self.main_tab = QTabWidget()
+        layout.addWidget(self.main_tab)
+        
+        # 代码生成标签页
+        code_tab_widget = QWidget()
+        code_tab_layout = QVBoxLayout(code_tab_widget)
+        
         # 定位方式选择
         locate_method_group = QGroupBox("定位方式")
         locate_method_layout = QHBoxLayout()
@@ -179,7 +229,7 @@ class MainWindow(QMainWindow):
         locate_method_layout.addWidget(self.coord_radio)
         
         locate_method_group.setLayout(locate_method_layout)
-        layout.addWidget(locate_method_group)
+        code_tab_layout.addWidget(locate_method_group)
         
         # 定位代码生成
         code_group = QGroupBox("定位代码生成")
@@ -206,12 +256,87 @@ class MainWindow(QMainWindow):
         test_layout = QHBoxLayout()
         self.test_loc_btn = QPushButton("测试定位")
         self.copy_btn = QPushButton("复制代码")
+        self.export_btn = QPushButton("导出代码")
         test_layout.addWidget(self.test_loc_btn)
         test_layout.addWidget(self.copy_btn)
+        test_layout.addWidget(self.export_btn)
         code_layout.addLayout(test_layout)
         
         code_group.setLayout(code_layout)
-        layout.addWidget(code_group)
+        code_tab_layout.addWidget(code_group)
+        
+        # 历史记录标签页
+        history_tab_widget = QWidget()
+        history_tab_layout = QVBoxLayout(history_tab_widget)
+        
+        # 历史记录搜索和管理
+        history_control_layout = QHBoxLayout()
+        
+        self.history_search_edit = QLineEdit()
+        self.history_search_edit.setPlaceholderText("搜索历史记录...")
+        self.history_search_btn = QPushButton("搜索")
+        self.history_clear_btn = QPushButton("清空")
+        
+        history_control_layout.addWidget(self.history_search_edit)
+        history_control_layout.addWidget(self.history_search_btn)
+        history_control_layout.addWidget(self.history_clear_btn)
+        
+        history_tab_layout.addLayout(history_control_layout)
+        
+        # 历史记录列表
+        self.history_table = QTableWidget()
+        self.history_table.setColumnCount(5)
+        self.history_table.setHorizontalHeaderLabels(["ID", "时间", "应用", "元素类型", "定位方法"])
+        self.history_table.horizontalHeader().setStretchLastSection(True)
+        history_tab_layout.addWidget(self.history_table)
+        
+        # 历史记录操作
+        history_action_layout = QHBoxLayout()
+        self.history_detail_btn = QPushButton("查看详情")
+        self.history_delete_btn = QPushButton("删除记录")
+        history_action_layout.addWidget(self.history_detail_btn)
+        history_action_layout.addWidget(self.history_delete_btn)
+        history_tab_layout.addLayout(history_action_layout)
+        
+        # 收藏夹标签页
+        favorites_tab_widget = QWidget()
+        favorites_tab_layout = QVBoxLayout(favorites_tab_widget)
+        
+        # 收藏夹搜索和管理
+        favorites_control_layout = QHBoxLayout()
+        
+        self.favorites_search_edit = QLineEdit()
+        self.favorites_search_edit.setPlaceholderText("搜索收藏夹...")
+        self.favorites_search_btn = QPushButton("搜索")
+        self.favorites_refresh_btn = QPushButton("刷新")
+        
+        favorites_control_layout.addWidget(self.favorites_search_edit)
+        favorites_control_layout.addWidget(self.favorites_search_btn)
+        favorites_control_layout.addWidget(self.favorites_refresh_btn)
+        
+        favorites_tab_layout.addLayout(favorites_control_layout)
+        
+        # 收藏夹列表
+        self.favorites_table = QTableWidget()
+        self.favorites_table.setColumnCount(4)
+        self.favorites_table.setHorizontalHeaderLabels(["ID", "元素类型", "元素名称", "标签"])
+        self.favorites_table.horizontalHeader().setStretchLastSection(True)
+        favorites_tab_layout.addWidget(self.favorites_table)
+        
+        # 收藏夹操作
+        favorites_action_layout = QHBoxLayout()
+        self.add_favorite_btn = QPushButton("添加到收藏夹")
+        self.remove_favorite_btn = QPushButton("移除收藏")
+        self.favorite_detail_btn = QPushButton("查看详情")
+        favorites_action_layout.addWidget(self.add_favorite_btn)
+        favorites_action_layout.addWidget(self.remove_favorite_btn)
+        favorites_action_layout.addWidget(self.favorite_detail_btn)
+        favorites_tab_layout.addLayout(favorites_action_layout)
+        
+        # 添加标签页到主标签页
+        self.main_tab.addTab(code_tab_widget, "代码生成")
+        self.main_tab.addTab(history_tab_widget, "历史记录")
+        self.main_tab.addTab(favorites_tab_widget, "收藏夹")
         
         return panel
     
@@ -265,6 +390,17 @@ class MainWindow(QMainWindow):
         self.capture_btn.clicked.connect(self.start_capture)
         self.test_loc_btn.clicked.connect(self.test_location)
         self.copy_btn.clicked.connect(self.copy_code)
+        self.export_btn.clicked.connect(self.export_code)
+        self.history_search_btn.clicked.connect(self.search_history)
+        self.history_clear_btn.clicked.connect(self.clear_history)
+        self.history_detail_btn.clicked.connect(self.view_history_detail)
+        self.history_delete_btn.clicked.connect(self.delete_history_record)
+        self.favorites_search_btn.clicked.connect(self.search_favorites)
+        self.favorites_refresh_btn.clicked.connect(self.refresh_favorites_list)
+        self.add_favorite_btn.clicked.connect(self.add_to_favorites)
+        self.remove_favorite_btn.clicked.connect(self.remove_from_favorites)
+        self.favorite_detail_btn.clicked.connect(self.view_favorite_detail)
+        self.wizard_btn.clicked.connect(self.show_wizard)
     
     def refresh_process_list(self):
         """刷新进程列表"""
@@ -304,24 +440,79 @@ class MainWindow(QMainWindow):
         if not window:
             return
         
-        # 构建元素树
+        # 构建根元素
         root_element = self.element_analyzer.analyze_window(window)
         if root_element:
-            self.build_element_tree(root_element)
+            # 创建根节点
+            root_item = QTreeWidgetItem(self.element_tree)
+            root_item.setText(0, f"{root_element.element_type} - {root_element.name or ''}")
+            root_item.setData(0, Qt.UserRole, root_element)
+            root_item.setData(0, Qt.UserRole + 1, False)  # 标记为未加载子节点
+            
+            # 添加一个占位节点，表示可以展开
+            placeholder = QTreeWidgetItem(root_item)
+            placeholder.setText(0, "Loading...")
+            
+            # 注册展开信号
+            self.element_tree.itemExpanded.connect(self.on_item_expanded)
     
-    def build_element_tree(self, element, parent_item=None):
-        """构建元素树"""
-        if parent_item is None:
-            parent_item = self.element_tree.invisibleRootItem()
+    def on_item_expanded(self, item):
+        """处理树节点展开事件，异步加载子节点"""
+        # 检查是否已加载子节点
+        if item.childCount() == 1 and item.child(0).text(0) == "Loading...":
+            # 删除占位节点
+            item.takeChild(0)
+            
+            # 获取元素对象
+            element = item.data(0, Qt.UserRole)
+            
+            # 异步加载子节点
+            self.load_child_elements(element, item)
+    
+    def load_child_elements(self, parent_element, parent_item):
+        """异步加载子元素"""
+        # 使用线程池异步加载子节点
+        from PyQt5.QtCore import QThreadPool, QRunnable, pyqtSlot
         
-        # 创建树节点
-        item = QTreeWidgetItem(parent_item)
-        item.setText(0, f"{element.element_type} - {element.name or ''}")
-        item.setData(0, Qt.UserRole, element)
+        class LoadChildTask(QRunnable):
+            """加载子元素的任务类"""
+            def __init__(self, parent_element, parent_item, main_window):
+                super().__init__()
+                self.parent_element = parent_element
+                self.parent_item = parent_item
+                self.main_window = main_window
+            
+            @pyqtSlot()
+            def run(self):
+                """执行加载任务"""
+                # 在后台线程中获取子元素
+                child_elements = self.parent_element.children
+                
+                # 在主线程中更新UI
+                from PyQt5.QtCore import QMetaObject, Q_ARG
+                QMetaObject.invokeMethod(
+                    self.main_window, "add_child_elements",
+                    Q_ARG(object, child_elements),
+                    Q_ARG(object, self.parent_item)
+                )
         
-        # 递归添加子元素
-        for child in element.children:
-            self.build_element_tree(child, item)
+        # 创建并启动任务
+        task = LoadChildTask(parent_element, parent_item, self)
+        QThreadPool.globalInstance().start(task)
+    
+    def add_child_elements(self, child_elements, parent_item):
+        """将子元素添加到树节点"""
+        for child in child_elements:
+            # 创建子节点
+            child_item = QTreeWidgetItem(parent_item)
+            child_item.setText(0, f"{child.element_type} - {child.name or ''}")
+            child_item.setData(0, Qt.UserRole, child)
+            child_item.setData(0, Qt.UserRole + 1, False)  # 标记为未加载子节点
+            
+            # 如果有子元素，添加占位节点
+            if child.children:
+                placeholder = QTreeWidgetItem(child_item)
+                placeholder.setText(0, "Loading...")
     
     def on_element_selected(self, item, column):
         """元素树节点选中时的处理"""
@@ -382,24 +573,31 @@ class MainWindow(QMainWindow):
         """开始捕获元素"""
         self.capture_btn.setText("捕获中...")
         self.capture_btn.setEnabled(False)
+        self.update_status("正在捕获元素...")
         
-        # 调用元素捕获模块
-        element = self.element_capture.capture_element()
-        
-        if element:
-            # 更新当前元素
-            self.current_element = element
+        try:
+            # 调用元素捕获模块
+            element = self.element_capture.capture_element()
             
-            # 更新UI
-            self.update_element_info(element)
-            self.update_element_path(element)
-            self.generate_locator_code(element)
-            
-            # 在元素树中选中该元素
-            self.select_element_in_tree(element)
-        
-        self.capture_btn.setText("捕获元素")
-        self.capture_btn.setEnabled(True)
+            if element:
+                # 更新当前元素
+                self.current_element = element
+                
+                # 更新UI
+                self.update_element_info(element)
+                self.update_element_path(element)
+                self.generate_locator_code(element)
+                
+                # 在元素树中选中该元素
+                self.select_element_in_tree(element)
+                self.update_status(f"成功捕获元素: {element.element_type} - {element.name}")
+            else:
+                self.update_status("未捕获到元素")
+        except Exception as e:
+            self.show_error("捕获失败", f"捕获元素时发生错误: {str(e)}")
+        finally:
+            self.capture_btn.setText("捕获元素")
+            self.capture_btn.setEnabled(True)
     
     def select_element_in_tree(self, target_element):
         """在元素树中选中目标元素"""
@@ -422,28 +620,465 @@ class MainWindow(QMainWindow):
     def test_location(self):
         """测试定位代码"""
         if not self.current_element:
+            self.show_warning("警告", "请先选择或捕获一个元素")
+            return
+        
+        # 确定当前选中的定位方法
+        if self.attr_radio.isChecked():
+            method = 'attribute'
+        elif self.image_radio.isChecked():
+            method = 'image'
+        elif self.coord_radio.isChecked():
+            method = 'coordinate'
+        else:
+            method = 'auto'
+        
+        try:
+            self.update_status(f"正在测试{method}定位...")
+            
+            # 生成当前定位代码
+            code = self.code_generator.generate_code_by_method(self.current_element, method)
+            
+            # 测试定位
+            result = self.element_capture.test_element_location(self.current_element)
+            
+            # 可视化定位反馈
+            if result:
+                self._draw_element_border(self.current_element)
+            
+            # 保存历史记录
+            self.history_manager.add_record(self.current_element, method, code, result)
+            self.refresh_history_list()
+            
+            if result:
+                self.show_info("成功", "定位成功！")
+            else:
+                self.show_warning("失败", "定位失败，请检查定位表达式")
+        except Exception as e:
+            self.show_error("测试定位失败", f"测试定位时发生错误: {str(e)}")
+    
+    def _draw_element_border(self, element):
+        """在元素周围绘制动态边框
+        
+        Args:
+            element: 要绘制边框的元素
+        """
+        try:
+            import win32gui
+            import win32con
+            import win32api
+            import time
+            
+            # 获取窗口句柄
+            hwnd = win32gui.WindowFromPoint((element.x, element.y))
+            if not hwnd:
+                return
+            
+            # 绘制闪烁的红色矩形
+            for i in range(3):  # 闪烁3次
+                # 绘制红色矩形
+                dc = win32gui.GetDC(hwnd)
+                pen = win32gui.CreatePen(win32con.PS_SOLID, 2, win32gui.RGB(255, 0, 0))
+                win32gui.SelectObject(dc, pen)
+                win32gui.Rectangle(dc, element.x, element.y, element.x + element.width, element.y + element.height)
+                win32gui.DeleteObject(pen)
+                win32gui.ReleaseDC(hwnd, dc)
+                
+                # 短暂延迟
+                time.sleep(0.3)
+                
+                # 清除矩形（重绘窗口）
+                win32gui.RedrawWindow(hwnd, (element.x - 10, element.y - 10, element.x + element.width + 10, element.y + element.height + 10), None, win32con.RDW_INVALIDATE | win32con.RDW_ERASE)
+                
+                # 短暂延迟
+                time.sleep(0.3)
+        except Exception as e:
+            print(f"绘制元素边框失败: {e}")
+    
+    def refresh_history_list(self):
+        """刷新历史记录列表"""
+        records = self.history_manager.get_all_records()
+        self.history_table.setRowCount(0)
+        
+        for record in records:
+            row = self.history_table.rowCount()
+            self.history_table.insertRow(row)
+            
+            # 格式化时间
+            timestamp = record['timestamp'].split('.')[0] if '.' in record['timestamp'] else record['timestamp']
+            
+            self.history_table.setItem(row, 0, QTableWidgetItem(str(record['id'])))
+            self.history_table.setItem(row, 1, QTableWidgetItem(timestamp))
+            self.history_table.setItem(row, 2, QTableWidgetItem(record['application']))
+            self.history_table.setItem(row, 3, QTableWidgetItem(record['element_type']))
+            self.history_table.setItem(row, 4, QTableWidgetItem(record['method']))
+    
+    def search_history(self):
+        """搜索历史记录"""
+        keyword = self.history_search_edit.text()
+        records = self.history_manager.search_records(keyword)
+        self.history_table.setRowCount(0)
+        
+        for record in records:
+            row = self.history_table.rowCount()
+            self.history_table.insertRow(row)
+            
+            # 格式化时间
+            timestamp = record['timestamp'].split('.')[0] if '.' in record['timestamp'] else record['timestamp']
+            
+            self.history_table.setItem(row, 0, QTableWidgetItem(str(record['id'])))
+            self.history_table.setItem(row, 1, QTableWidgetItem(timestamp))
+            self.history_table.setItem(row, 2, QTableWidgetItem(record['application']))
+            self.history_table.setItem(row, 3, QTableWidgetItem(record['element_type']))
+            self.history_table.setItem(row, 4, QTableWidgetItem(record['method']))
+    
+    def clear_history(self):
+        """清空历史记录"""
+        reply = QMessageBox.question(
+            self, "确认清空", "确定要清空所有历史记录吗？",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            self.history_manager.clear_history()
+            self.refresh_history_list()
+            QMessageBox.information(self, "成功", "历史记录已清空")
+    
+    def view_history_detail(self):
+        """查看历史记录详情"""
+        current_row = self.history_table.currentRow()
+        if current_row < 0:
+            QMessageBox.warning(self, "警告", "请先选择一条历史记录")
+            return
+        
+        # 获取选中记录的ID
+        record_id = int(self.history_table.item(current_row, 0).text())
+        record = self.history_manager.get_record_by_id(record_id)
+        
+        if record:
+            # 显示历史记录详情
+            detail_dialog = QMessageBox()
+            detail_dialog.setWindowTitle("历史记录详情")
+            detail_dialog.setTextFormat(Qt.RichText)
+            
+            detail_text = f"<h3>历史记录详情</h3>"
+            detail_text += f"<p><b>ID:</b> {record['id']}</p>"
+            detail_text += f"<p><b>时间:</b> {record['timestamp']}</p>"
+            detail_text += f"<p><b>应用:</b> {record['application']}</p>"
+            detail_text += f"<p><b>元素类型:</b> {record['element_type']}</p>"
+            detail_text += f"<p><b>元素名称:</b> {record['element_name']}</p>"
+            detail_text += f"<p><b>Automation ID:</b> {record['automation_id']}</p>"
+            detail_text += f"<p><b>类名:</b> {record['class_name']}</p>"
+            detail_text += f"<p><b>定位方法:</b> {record['method']}</p>"
+            detail_text += f"<p><b>定位结果:</b> {'成功' if record['result'] else '失败'}</p>"
+            detail_text += f"<p><b>坐标:</b> ({record['coordinates']['x']}, {record['coordinates']['y']})</p>"
+            detail_text += f"<p><b>尺寸:</b> {record['coordinates']['width']}x{record['coordinates']['height']}</p>"
+            
+            detail_dialog.setText(detail_text)
+            detail_dialog.setStandardButtons(QMessageBox.Ok | QMessageBox.Copy)
+            
+            if detail_dialog.exec_() == QMessageBox.Copy:
+                # 复制代码到剪贴板
+                from PyQt5.QtWidgets import QApplication
+                clipboard = QApplication.clipboard()
+                clipboard.setText(record['code'])
+    
+    def delete_history_record(self):
+        """删除历史记录"""
+        current_row = self.history_table.currentRow()
+        if current_row < 0:
+            QMessageBox.warning(self, "警告", "请先选择一条历史记录")
+            return
+        
+        # 获取选中记录的ID
+        record_id = int(self.history_table.item(current_row, 0).text())
+        
+        reply = QMessageBox.question(
+            self, "确认删除", "确定要删除这条历史记录吗？",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            self.history_manager.delete_record(record_id)
+            self.refresh_history_list()
+            QMessageBox.information(self, "成功", "历史记录已删除")
+    
+    def refresh_favorites_list(self):
+        """刷新收藏夹列表"""
+        favorites = self.favorites_manager.get_all_favorites()
+        self.favorites_table.setRowCount(0)
+        
+        for fav in favorites:
+            row = self.favorites_table.rowCount()
+            self.favorites_table.insertRow(row)
+            
+            self.favorites_table.setItem(row, 0, QTableWidgetItem(str(fav['id'])))
+            self.favorites_table.setItem(row, 1, QTableWidgetItem(fav['element_type']))
+            self.favorites_table.setItem(row, 2, QTableWidgetItem(fav['element_name'] or ''))
+            self.favorites_table.setItem(row, 3, QTableWidgetItem(', '.join(fav['tags'])))
+    
+    def search_favorites(self):
+        """搜索收藏夹"""
+        keyword = self.favorites_search_edit.text()
+        favorites = self.favorites_manager.search_favorites(keyword)
+        self.favorites_table.setRowCount(0)
+        
+        for fav in favorites:
+            row = self.favorites_table.rowCount()
+            self.favorites_table.insertRow(row)
+            
+            self.favorites_table.setItem(row, 0, QTableWidgetItem(str(fav['id'])))
+            self.favorites_table.setItem(row, 1, QTableWidgetItem(fav['element_type']))
+            self.favorites_table.setItem(row, 2, QTableWidgetItem(fav['element_name'] or ''))
+            self.favorites_table.setItem(row, 3, QTableWidgetItem(', '.join(fav['tags'])))
+    
+    def add_to_favorites(self):
+        """添加当前元素到收藏夹"""
+        if not self.current_element:
             QMessageBox.warning(self, "警告", "请先选择或捕获一个元素")
             return
         
-        # 测试定位
-        result = self.element_capture.test_element_location(self.current_element)
-        if result:
-            QMessageBox.information(self, "成功", "定位成功！")
+        # 添加到收藏夹
+        success = self.favorites_manager.add_favorite(self.current_element)
+        if success:
+            self.refresh_favorites_list()
+            QMessageBox.information(self, "成功", "元素已添加到收藏夹")
         else:
-            QMessageBox.warning(self, "失败", "定位失败，请检查定位表达式")
+            QMessageBox.warning(self, "警告", "该元素已在收藏夹中")
+    
+    def remove_from_favorites(self):
+        """从收藏夹移除元素"""
+        current_row = self.favorites_table.currentRow()
+        if current_row < 0:
+            QMessageBox.warning(self, "警告", "请先选择一个收藏项")
+            return
+        
+        # 获取选中收藏项的ID
+        favorite_id = int(self.favorites_table.item(current_row, 0).text())
+        
+        reply = QMessageBox.question(
+            self, "确认移除", "确定要从收藏夹移除这个元素吗？",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            self.favorites_manager.remove_favorite(favorite_id)
+            self.refresh_favorites_list()
+            QMessageBox.information(self, "成功", "元素已从收藏夹移除")
+    
+    def view_favorite_detail(self):
+        """查看收藏项详情"""
+        current_row = self.favorites_table.currentRow()
+        if current_row < 0:
+            QMessageBox.warning(self, "警告", "请先选择一个收藏项")
+            return
+        
+        # 获取选中收藏项的ID
+        favorite_id = int(self.favorites_table.item(current_row, 0).text())
+        favorite = self.favorites_manager.get_favorite_by_id(favorite_id)
+        
+        if favorite:
+            # 显示收藏项详情
+            detail_dialog = QMessageBox()
+            detail_dialog.setWindowTitle("收藏项详情")
+            detail_dialog.setTextFormat(Qt.RichText)
+            
+            detail_text = f"<h3>收藏项详情</h3>"
+            detail_text += f"<p><b>ID:</b> {favorite['id']}</p>"
+            detail_text += f"<p><b>添加时间:</b> {favorite['added_at']}</p>"
+            detail_text += f"<p><b>应用:</b> {favorite['application']}</p>"
+            detail_text += f"<p><b>元素类型:</b> {favorite['element_type']}</p>"
+            detail_text += f"<p><b>元素名称:</b> {favorite['element_name']}</p>"
+            detail_text += f"<p><b>Automation ID:</b> {favorite['automation_id']}</p>"
+            detail_text += f"<p><b>类名:</b> {favorite['class_name']}</p>"
+            detail_text += f"<p><b>标签:</b> {', '.join(favorite['tags'])}</p>"
+            detail_text += f"<p><b>坐标:</b> ({favorite['coordinates']['x']}, {favorite['coordinates']['y']})</p>"
+            detail_text += f"<p><b>尺寸:</b> {favorite['coordinates']['width']}x{favorite['coordinates']['height']}</p>"
+            
+            detail_dialog.setText(detail_text)
+            detail_dialog.exec_()
+    
+    def create_wizard_dialog(self):
+        """创建向导对话框"""
+        self.wizard = QWizard()
+        self.wizard.setWindowTitle("定位元素向导")
+        self.wizard.setPage(1, self.create_wizard_page_1())
+        self.wizard.setPage(2, self.create_wizard_page_2())
+        self.wizard.setPage(3, self.create_wizard_page_3())
+    
+    def create_wizard_page_1(self):
+        """创建向导第一页：选择应用"""
+        page = QWizardPage()
+        page.setTitle("第一步：选择应用")
+        page.setSubTitle("请从列表中选择要定位的应用程序")
+        
+        layout = QVBoxLayout()
+        label = QLabel("1. 选择一个正在运行的应用程序，然后点击'下一步'继续")
+        layout.addWidget(label)
+        layout.addWidget(QLabel("提示：如果列表中没有您需要的应用，请点击'刷新'按钮"))
+        page.setLayout(layout)
+        
+        return page
+    
+    def create_wizard_page_2(self):
+        """创建向导第二页：捕获元素"""
+        page = QWizardPage()
+        page.setTitle("第二步：捕获元素")
+        page.setSubTitle("将鼠标移动到目标元素上，按下Ctrl键确认捕获")
+        
+        layout = QVBoxLayout()
+        label = QLabel("2. 点击'开始捕获'按钮，然后将鼠标移动到目标元素上，按下Ctrl键确认")
+        layout.addWidget(label)
+        layout.addWidget(QLabel("提示：捕获成功后，元素信息将显示在右侧面板中"))
+        page.setLayout(layout)
+        
+        return page
+    
+    def create_wizard_page_3(self):
+        """创建向导第三页：生成代码"""
+        page = QWizardPage()
+        page.setTitle("第三步：生成代码")
+        page.setSubTitle("查看并复制生成的定位代码")
+        
+        layout = QVBoxLayout()
+        label = QLabel("3. 选择定位方法，查看生成的代码，然后点击'复制代码'或'导出代码'使用")
+        layout.addWidget(label)
+        layout.addWidget(QLabel("提示：您可以在'历史记录'和'收藏夹'标签中管理定位记录"))
+        page.setLayout(layout)
+        
+        return page
+    
+    def show_wizard(self):
+        """显示向导对话框"""
+        self.wizard.show()
+    
+    def init_logging(self):
+        """初始化日志记录"""
+        import logging
+        import os
+        
+        # 创建日志目录
+        log_dir = os.path.join(os.path.dirname(__file__), '..', 'logs')
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir)
+        
+        # 配置日志
+        logging.basicConfig(
+            filename=os.path.join(log_dir, 'locator_desktop.log'),
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            encoding='utf-8'
+        )
+        
+        # 添加控制台日志
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO)
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        console_handler.setFormatter(formatter)
+        logging.getLogger().addHandler(console_handler)
+        
+        logging.info("Locator_desktop 应用启动")
+    
+    def update_status(self, message):
+        """更新状态栏消息
+        
+        Args:
+            message: 要显示的消息
+        """
+        self.statusBar().showMessage(message)
+        import logging
+        logging.info(message)
+    
+    def show_error(self, title, message):
+        """显示错误消息
+        
+        Args:
+            title: 错误标题
+            message: 错误消息
+        """
+        QMessageBox.critical(self, title, message)
+        self.update_status(f"错误: {message}")
+        import logging
+        logging.error(f"{title}: {message}")
+    
+    def show_warning(self, title, message):
+        """显示警告消息
+        
+        Args:
+            title: 警告标题
+            message: 警告消息
+        """
+        QMessageBox.warning(self, title, message)
+        self.update_status(f"警告: {message}")
+        import logging
+        logging.warning(f"{title}: {message}")
+    
+    def show_info(self, title, message):
+        """显示信息消息
+        
+        Args:
+            title: 信息标题
+            message: 信息消息
+        """
+        QMessageBox.information(self, title, message)
+        self.update_status(message)
+        import logging
+        logging.info(f"{title}: {message}")
     
     def copy_code(self):
         """复制当前选中标签页的代码"""
-        current_tab = self.code_tab.currentIndex()
-        if current_tab == 0:
-            code = self.pywinauto_code_edit.toPlainText()
-        else:
-            code = self.uiauto_code_edit.toPlainText()
+        try:
+            from PyQt5.QtWidgets import QApplication
+            current_tab = self.code_tab.currentIndex()
+            if current_tab == 0:
+                code = self.pywinauto_code_edit.toPlainText()
+            else:
+                code = self.uiauto_code_edit.toPlainText()
+            
+            # 复制到剪贴板
+            clipboard = QApplication.clipboard()
+            clipboard.setText(code)
+            self.show_info("成功", "代码已复制到剪贴板")
+        except Exception as e:
+            self.show_error("复制失败", f"复制代码时发生错误: {str(e)}")
+    
+    def export_code(self):
+        """导出代码到文件"""
+        if not self.current_element:
+            self.show_warning("警告", "请先选择或捕获一个元素")
+            return
         
-        # 复制到剪贴板
-        clipboard = QApplication.clipboard()
-        clipboard.setText(code)
-        QMessageBox.information(self, "成功", "代码已复制到剪贴板")
+        # 确定当前选中的定位方法
+        if self.attr_radio.isChecked():
+            method = 'attribute'
+        elif self.image_radio.isChecked():
+            method = 'image'
+        elif self.coord_radio.isChecked():
+            method = 'coordinate'
+        else:
+            method = 'auto'
+        
+        try:
+            self.update_status("正在生成代码...")
+            
+            # 生成完整可执行脚本
+            code = self.code_generator.generate_complete_script(self.current_element, method)
+            
+            # 弹出文件保存对话框
+            file_path, _ = QFileDialog.getSaveFileName(
+                self, "导出代码", "generated_script.py", "Python Files (*.py);;All Files (*)"
+            )
+            
+            if file_path:
+                try:
+                    with open(file_path, 'w', encoding='utf-8') as f:
+                        f.write(code)
+                    self.show_info("成功", f"代码已导出到 {file_path}")
+                    self.update_status(f"代码已导出到 {file_path}")
+                except Exception as e:
+                    self.show_error("导出失败", f"保存文件时发生错误: {str(e)}")
+        except Exception as e:
+            self.show_error("导出失败", f"生成代码时发生错误: {str(e)}")
     
     def on_process_changed(self):
         """进程选择变化时的处理"""
