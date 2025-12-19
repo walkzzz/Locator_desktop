@@ -103,3 +103,22 @@ class ProcessUtils:
             return proc.exe()
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             return None
+    
+    @staticmethod
+    def start_process(exe_path, args=None):
+        """启动进程
+        
+        Args:
+            exe_path: 可执行文件路径
+            args: 命令行参数列表
+            
+        Returns:
+            启动的进程对象，失败返回None
+        """
+        import subprocess
+        try:
+            process = subprocess.Popen([exe_path] + (args or []))
+            return process
+        except Exception as e:
+            print(f"启动进程失败: {e}")
+            return None

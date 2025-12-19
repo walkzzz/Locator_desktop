@@ -134,6 +134,15 @@ class MainWindow(QMainWindow):
         layout.addWidget(QLabel("应用程序:"))
         layout.addWidget(self.app_path_edit)
         
+        # 浏览按钮
+        self.browse_btn = QPushButton("浏览")
+        layout.addWidget(self.browse_btn)
+        
+        # 启动按钮
+        self.start_btn = QPushButton("启动")
+        self.start_btn.setStyleSheet("background-color: #2196F3; color: white;")
+        layout.addWidget(self.start_btn)
+        
         # 查找按钮
         self.find_next_btn = QPushButton("查找下一个")
         self.find_prev_btn = QPushButton("查找上一个")
@@ -151,6 +160,71 @@ class MainWindow(QMainWindow):
         
         toolbar.setLayout(layout)
         return toolbar
+    
+    def start_application(self):
+        """启动应用程序"""
+        app_path = self.app_path_edit.text().strip()
+        
+        if not app_path:
+            self.show_error("错误", "请先输入或选择应用程序路径")
+            return
+        
+        # 验证路径是否有效
+        import os
+        if not os.path.exists(app_path):
+            self.show_error("错误", "应用程序路径不存在")
+            return
+        
+        # 验证文件是否可执行
+        if os.name == 'nt':
+            # Windows系统，检查是否为.exe文件
+            if not app_path.lower().endswith('.exe'):
+                reply = QMessageBox.question(
+                    self, "确认启动", f"所选文件 '{os.path.basename(app_path)}' 不是Windows可执行文件(.exe)，是否仍要启动？",
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+                )
+                if reply != QMessageBox.Yes:
+                    return
+        else:
+            # Linux/macOS系统，检查文件是否有执行权限
+            if not os.access(app_path, os.X_OK):
+                self.show_error("错误", "应用程序不可执行，请检查文件权限")
+                return
+        
+        try:
+            # 启动应用程序
+            process = self.process_utils.start_process(app_path)
+            if process:
+                self.update_status(f"成功启动应用程序: {os.path.basename(app_path)}")
+                # 刷新进程列表
+                self.refresh_process_list()
+            else:
+                self.show_error("错误", "启动应用程序失败")
+        except Exception as e:
+            self.show_error("启动失败", f"启动应用程序时发生错误: {str(e)}")
+    
+    def browse_app(self):
+        """浏览选择应用程序"""
+        # 根据不同操作系统设置文件过滤器
+        import sys
+        if sys.platform == 'win32':
+            # Windows平台，过滤可执行文件
+            filters = "应用程序 (*.exe);;所有文件 (*.*)"
+        elif sys.platform == 'darwin':
+            # macOS平台，过滤应用包和可执行文件
+            filters = "应用程序 (*.app);;可执行文件 (*);;所有文件 (*.*)"
+        else:
+            # Linux平台，过滤可执行文件
+            filters = "可执行文件 (*);;所有文件 (*.*)"
+        
+        # 打开文件对话框
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "选择应用程序", ".", filters
+        )
+        
+        if file_path:
+            # 更新应用路径输入框
+            self.app_path_edit.setText(file_path)
     
     def create_left_panel(self):
         """创建左侧面板"""
@@ -465,6 +539,10 @@ class MainWindow(QMainWindow):
         self.remove_favorite_btn.clicked.connect(self.remove_from_favorites)
         self.favorite_detail_btn.clicked.connect(self.view_favorite_detail)
         self.wizard_btn.clicked.connect(self.show_wizard)
+        # 浏览按钮点击事件
+        self.browse_btn.clicked.connect(self.browse_app)
+        # 启动按钮点击事件
+        self.start_btn.clicked.connect(self.start_application)
         
         # 定位方式快捷按钮点击事件
         self.attr_btn.clicked.connect(lambda: self.on_locator_method_changed('attribute'))
@@ -856,6 +934,11 @@ class MainWindow(QMainWindow):
         self.update_status("正在捕获元素...")
         
         try:
+            # 检查是否有运行中的应用程序
+            if not self.process_combo.currentText():
+                self.show_warning("提示", "请先选择一个运行中的应用程序或启动一个应用程序")
+                return
+            
             # 调用元素捕获模块
             element = self.element_capture.capture_element()
             
